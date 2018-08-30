@@ -60,6 +60,7 @@ init () {
   init_no_sleep
   init_hostname
   init_perms
+  init_maskeep
   init_updates
 
   config_new_account
@@ -151,21 +152,137 @@ init_perms () {
   done
 }
 
+# Install Developer Tools
+
+init_devtools () {
+  p="${HOMEBREW_CACHE}/Cask/Command Line Tools (macOS High Sierra version 10.13).pkg"
+  i="com.apple.pkg.CLTools_SDK_macOS1013"
+
+  if test -f "${p}"; then
+    if ! pkgutil --pkg-info "${i}" > /dev/null 2>&1; then
+      sudo installer -pkg "${p}" -target /
+    fi
+  else
+    xcode-select --install
+  fi
+}
+
+# Install Xcode
+
+init_xcode () {
+  if test -f ${HOMEBREW_CACHE}/Cask/xcode*.xip; then
+    p "Installing Xcode"
+    dest="${HOMEBREW_CACHE}/Cask/xcode"
+    if ! test -d "$dest"; then
+      pkgutil --expand ${HOMEBREW_CACHE}/Cask/xcode*.xip "$dest"
+      curl --location --silent \
+        "https://gist.githubusercontent.com/pudquick/ff412bcb29c9c1fa4b8d/raw/24b25538ea8df8d0634a2a6189aa581ccc6a5b4b/parse_pbzx2.py" | \
+        python - "${dest}/Content"
+      find "${dest}" -empty -name "*.xz" -type f -print0 | \
+        xargs -0 -l 1 rm
+      find "${dest}" -name "*.xz" -print0 | \
+        xargs -0 -L 1 gunzip
+      cat ${dest}/Content.part* > \
+        ${dest}/Content.cpio
+    fi
+    cd /Applications && \
+      sudo cpio -dimu --file=${dest}/Content.cpio
+    for pkg in /Applications/Xcode*.app/Contents/Resources/Packages/*.pkg; do
+      sudo installer -pkg "$pkg" -target /
+    done
+    x="$(find '/Applications' -maxdepth 1 -regex '.*/Xcode[^ ]*.app' -print -quit)"
+    if test -n "${x}"; then
+      sudo xcode-select -s "${x}"
+      sudo xcodebuild -license accept
+    fi
+  fi
+}
+
 # Install macOS Updates
 
 init_updates () {
   sudo softwareupdate --install --all
 }
 
+# Save Mac App Store Packages
+# #+begin_example sh
+# sudo lsof -c softwareupdated -F -r 2 | sed '/^n\//!d;/com.apple.SoftwareUpdate/!d;s/^n//'
+# sudo lsof -c storedownloadd -F -r 2 | sed '/^n\//!d;/com.apple.appstore/!d;s/^n//'
+# #+end_example
+
+_maskeep_launchd='add	:KeepAlive	bool	false
+add	:Label	string	com.github.ptb.maskeep
+add	:ProcessType	string	Background
+add	:Program	string	/usr/local/bin/maskeep
+add	:RunAtLoad	bool	true
+add	:StandardErrorPath	string	/dev/stderr
+add	:StandardOutPath	string	/dev/stdout
+add	:UserName	string	root
+add	:WatchPaths	array	
+add	:WatchPaths:0	string	$(sudo find '"'"'/private/var/folders'"'"' -name '"'"'com.apple.SoftwareUpdate'"'"' -type d -user _softwareupdate -print -quit 2> /dev/null)
+add	:WatchPaths:1	string	$(sudo -u \\#501 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
+add	:WatchPaths:2	string	$(sudo -u \\#502 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
+add	:WatchPaths:3	string	$(sudo -u \\#503 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
+add	:WatchPaths:4	string	/Library/Updates'
+
+init_maskeep () {
+  sudo softwareupdate --reset-ignored > /dev/null
+
+  cat << EOF > "/usr/local/bin/maskeep"
+#!/bin/sh
+
+asdir="/Library/Caches/storedownloadd"
+as1="\$(sudo -u \\#501 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
+as2="\$(sudo -u \\#502 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
+as3="\$(sudo -u \\#503 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
+upd="/Library/Updates"
+sudir="/Library/Caches/softwareupdated"
+su="\$(sudo find '/private/var/folders' -name 'com.apple.SoftwareUpdate' -type d -user _softwareupdate 2> /dev/null)"
+
+for i in 1 2 3 4 5; do
+  mkdir -m a=rwxt -p "\$asdir"
+  for as in "\$as1" "\$as2" "\$as3" "\$upd"; do
+    test -d "\$as" && \
+    find "\${as}" -type d -print | \\
+    while read a; do
+      b="\${asdir}/\$(basename \$a)"
+      mkdir -p "\${b}"
+      find "\${a}" -type f -print | \\
+      while read c; do
+        d="\$(basename \$c)"
+        test -e "\${b}/\${d}" || \\
+          ln "\${c}" "\${b}/\${d}" && \\
+          chmod 666 "\${b}/\${d}"
+      done
+    done
+  done
+
+  mkdir -m a=rwxt -p "\${sudir}"
+  find "\${su}" -name "*.tmp" -type f -print | \\
+  while read a; do
+    d="\$(basename \$a)"
+    test -e "\${sudir}/\${d}.xar" ||
+      ln "\${a}" "\${sudir}/\${d}.xar" && \\
+      chmod 666 "\${sudir}/\${d}.xar"
+  done
+
+  sleep 1
+done
+
+exit 0
+EOF
+
+  chmod a+x "/usr/local/bin/maskeep"
+  rehash
+
+  config_launchd "/Library/LaunchDaemons/com.github.ptb.maskeep.plist" "$_maskeep_launchd" "sudo" ""
+}
 
 # Define Function =install=
 
 install () {
   install_macos_sw
-  install_node_sw
-  install_perl_sw
   install_python_sw
-  install_ruby_sw
 
   which config
 }
@@ -226,16 +343,11 @@ install_brew () {
 
 # Add Homebrew Taps to Brewfile
 
-_taps='caskroom/cask
-caskroom/fonts
-caskroom/versions
+_taps='
+homebrew/cask-fonts
+homebrew/cask-versions
 homebrew/bundle
-homebrew/command-not-found
-homebrew/nginx
-homebrew/php
-homebrew/services
-ptb/custom
-railwaycat/emacsmacport'
+'
 
 install_brewfile_taps () {
   printf "%s\n" "${_taps}" | \
@@ -247,96 +359,26 @@ install_brewfile_taps () {
 
 # Add Homebrew Packages to Brewfile
 
-_pkgs='aspell
+_pkgs='
 bash
-certbot
-chromedriver
-coreutils
-dash
-duti
-e2fsprogs
 fasd
-fdupes
-gawk
-getmail
 git
-git-flow
-git-lfs
-gnu-sed
-gnupg
-gpac
-httpie
-hub
-ievms
 imagemagick
 mas
-mercurial
-mp4v2
-mtr
-nmap
 node
 nodenv
-openssl
 p7zip
-perl-build
-pinentry-mac
-plenv
 pyenv
-rbenv
 rsync
-selenium-server-standalone
 shellcheck
 sleepwatcher
 sqlite
-stow
-syncthing
-syncthing-inotify
-tag
-terminal-notifier
-the_silver_searcher
-trash
 unrar
-vcsh
 vim
-yarn
-youtube-dl
 zsh
 zsh-syntax-highlighting
 zsh-history-substring-search
-homebrew/php/php71
-ptb/custom/dovecot
-ptb/custom/ffmpeg
-sdl2
-zimg
-x265
-webp
-wavpack
-libvorbis
-libvidstab
-two-lame
-theora
-tesseract
-speex
-libssh
-libsoxr
-snappy
-schroedinger
-rubberband
-rtmpdump
-opus
-openh264
-opencore-amr
-libmodplug
-libgsm
-game-music-emu
-fontconfig
-fdk-aac
-libcaca
-libbs2b
-libbluray
-libass
-chromaprint
-ptb/custom/nginx-full'
+'
 
 install_brewfile_brew_pkgs () {
   printf "%s\n" "${_pkgs}" | \
@@ -368,93 +410,31 @@ install_brewfile_cask_args () {
 
 # Add Homebrew Casks to Brewfile
 
-_casks='java
-xquartz
-adium
+_casks='
 alfred
-arduino
 atom
-bbedit
 betterzip
-bitbar
 caffeine
-carbon-copy-cloner
-charles
-dash
+font-inconsolata-lgc
+font-fira-code
 dropbox
-exifrenamer
-find-empty-folders
 firefox
 github-desktop
-gitup
 google-chrome
-hammerspoon
-handbrake
-hermes
-imageoptim
-inkscape
-integrity
 istat-menus
 iterm2
-jubler
+java
 little-snitch
-machg
-menubar-countdown
-meteorologist
-moom
-mp4tools
-musicbrainz-picard
-namechanger
-nvalt
-nzbget
-nzbvortex
-openemu
-opera
-pacifist
-platypus
-plex-media-server
-qlstephen
-quitter
-radarr
 rescuetime
-resilio-sync
-scrivener
-sizeup
-sketch
-sketchup
-skitch
-skype
 slack
-sonarr
-sonarr-menu
-sourcetree
-steermouse
-subler
 sublime-text
 the-unarchiver
-time-sink
-torbrowser
-tower
+transmit
 unrarx
-vimr
 vlc
-vmware-fusion
-wireshark
-xld
-caskroom/fonts/font-inconsolata-lgc
-caskroom/versions/transmit4
-ptb/custom/adobe-creative-cloud-2014
-ptb/custom/blankscreen
-ptb/custom/composer
-ptb/custom/enhanced-dictation
-ptb/custom/ipmenulet
-ptb/custom/pcalc-3
-ptb/custom/sketchup-pro
-ptb/custom/text-to-speech-alex
-ptb/custom/text-to-speech-allison
-ptb/custom/text-to-speech-samantha
-ptb/custom/text-to-speech-tom
-railwaycat/emacsmacport/emacs-mac-spacemacs-icon'
+xquartz
+zerotier-one
+'
 
 install_brewfile_cask_pkgs () {
   printf "%s\n" "${_casks}" | \
@@ -463,24 +443,16 @@ install_brewfile_cask_pkgs () {
   done
   printf "\n" >> "${BREWFILE}"
 }
-
 # Add App Store Packages to Brewfile
-
 _mas='1Password	443987910
 Affinity Photo	824183456
-Coffitivity	659901392
-Duplicate Photos Fixer Pro	963642514
+Affinity Designer 824171161
+Fantastical 975937182
 Growl	467939042
 HardwareGrowler	475260933
-I Love Stars	402642760
-Icon Slate	439697913
-Justnotes	511230166
-Keynote	409183694
-Metanota Pro	515250764
-Numbers	409203825
-Pages	409201541
-WiFi Explorer	494803304
-Xcode	497799835'
+Reeder 880001334
+Xcode	497799835
+'
 
 install_brewfile_mas_apps () {
   open "/Applications/App Store.app"
@@ -497,92 +469,6 @@ install_brewfile_mas_apps () {
   done
 }
 
-# Link System Utilities to Applications
-
-_links='/System/Library/CoreServices/Applications
-/Applications/Xcode.app/Contents/Applications
-/Applications/Xcode.app/Contents/Developer/Applications
-/Applications/Xcode-beta.app/Contents/Applications
-/Applications/Xcode-beta.app/Contents/Developer/Applications'
-
-install_links () {
-  printf "%s\n" "${_links}" | \
-  while IFS="$(printf '\t')" read link; do
-    find "${link}" -maxdepth 1 -name "*.app" -type d -print0 2> /dev/null | \
-    xargs -0 -I {} -L 1 ln -s "{}" "/Applications" 2> /dev/null
-  done
-}
-
-# Install Node.js with =nodenv=
-
-_npm='eslint
-eslint-config-cleanjs
-eslint-plugin-better
-eslint-plugin-fp
-eslint-plugin-import
-eslint-plugin-json
-eslint-plugin-promise
-eslint-plugin-standard
-gatsby
-json
-sort-json'
-
-install_node_sw () {
-  if which nodenv > /dev/null; then
-    NODENV_ROOT="/usr/local/node" && export NODENV_ROOT
-
-    sudo mkdir -p "$NODENV_ROOT"
-    sudo chown -R "$(whoami):admin" "$NODENV_ROOT"
-
-    p "Installing Node.js with nodenv"
-    git clone https://github.com/nodenv/node-build-update-defs.git \
-      "$(nodenv root)"/plugins/node-build-update-defs
-    nodenv update-version-defs > /dev/null
-
-    nodenv install --skip-existing 8.7.0
-    nodenv global 8.7.0
-
-    grep -q "${NODENV_ROOT}" "/etc/paths" || \
-    sudo sed -i "" -e "1i\\
-${NODENV_ROOT}/shims
-" "/etc/paths"
-
-    init_paths
-    rehash
-  fi
-
-  T=$(printf '\t')
-
-  printf "%s\n" "$_npm" | \
-  while IFS="$T" read pkg; do
-    npm install --global "$pkg"
-  done
-
-  rehash
-}
-
-# Install Perl 5 with =plenv=
-
-install_perl_sw () {
-  if which plenv > /dev/null; then
-    PLENV_ROOT="/usr/local/perl" && export PLENV_ROOT
-
-    sudo mkdir -p "$PLENV_ROOT"
-    sudo chown -R "$(whoami):admin" "$PLENV_ROOT"
-
-    p "Installing Perl 5 with plenv"
-    plenv install 5.26.0 > /dev/null 2>&1
-    plenv global 5.26.0
-
-    grep -q "${PLENV_ROOT}" "/etc/paths" || \
-    sudo sed -i "" -e "1i\\
-${PLENV_ROOT}/shims
-" "/etc/paths"
-
-    init_paths
-    rehash
-  fi
-}
 
 # Install Python with =pyenv=
 
@@ -620,40 +506,6 @@ ${PYENV_ROOT}/shims
   fi
 }
 
-# Install Ruby with =rbenv=
-
-install_ruby_sw () {
-  if which rbenv > /dev/null; then
-    RBENV_ROOT="/usr/local/ruby" && export RBENV_ROOT
-
-    sudo mkdir -p "$RBENV_ROOT"
-    sudo chown -R "$(whoami):admin" "$RBENV_ROOT"
-
-    p "Installing Ruby with rbenv"
-    rbenv install --skip-existing 2.4.2
-    rbenv global 2.4.2
-
-    grep -q "${RBENV_ROOT}" "/etc/paths" || \
-    sudo sed -i "" -e "1i\\
-${RBENV_ROOT}/shims
-" "/etc/paths"
-
-    init_paths
-    rehash
-
-    printf "%s\n" \
-      "gem: --no-document" | \
-    tee "${HOME}/.gemrc" > /dev/null
-
-    gem update --system > /dev/null
-
-    trash "$(which rdoc)"
-    trash "$(which ri)"
-    gem update
-
-    gem install bundler
-  fi
-}
 
 # Define Function =config=
 

@@ -21,7 +21,7 @@ esac
 
 #+begin_example sh
 curl --location --silent \
-  "https://github.com/ptb/mac-setup/raw/develop/mac-setup.command" | \
+  "https://github.com/wjhrdy/mac-setup/raw/develop/mac-setup.command" | \
   source /dev/stdin 0
 #+end_example
 
