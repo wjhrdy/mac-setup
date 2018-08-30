@@ -60,7 +60,6 @@ init () {
   init_no_sleep
   init_hostname
   init_perms
-  init_maskeep
   init_updates
 
   config_new_account
@@ -152,131 +151,12 @@ init_perms () {
   done
 }
 
-# Install Developer Tools
-
-init_devtools () {
-  p="${HOMEBREW_CACHE}/Cask/Command Line Tools (macOS High Sierra version 10.13).pkg"
-  i="com.apple.pkg.CLTools_SDK_macOS1013"
-
-  if test -f "${p}"; then
-    if ! pkgutil --pkg-info "${i}" > /dev/null 2>&1; then
-      sudo installer -pkg "${p}" -target /
-    fi
-  else
-    xcode-select --install
-  fi
-}
-
-# Install Xcode
-
-init_xcode () {
-  if test -f ${HOMEBREW_CACHE}/Cask/xcode*.xip; then
-    p "Installing Xcode"
-    dest="${HOMEBREW_CACHE}/Cask/xcode"
-    if ! test -d "$dest"; then
-      pkgutil --expand ${HOMEBREW_CACHE}/Cask/xcode*.xip "$dest"
-      curl --location --silent \
-        "https://gist.githubusercontent.com/pudquick/ff412bcb29c9c1fa4b8d/raw/24b25538ea8df8d0634a2a6189aa581ccc6a5b4b/parse_pbzx2.py" | \
-        python - "${dest}/Content"
-      find "${dest}" -empty -name "*.xz" -type f -print0 | \
-        xargs -0 -l 1 rm
-      find "${dest}" -name "*.xz" -print0 | \
-        xargs -0 -L 1 gunzip
-      cat ${dest}/Content.part* > \
-        ${dest}/Content.cpio
-    fi
-    cd /Applications && \
-      sudo cpio -dimu --file=${dest}/Content.cpio
-    for pkg in /Applications/Xcode*.app/Contents/Resources/Packages/*.pkg; do
-      sudo installer -pkg "$pkg" -target /
-    done
-    x="$(find '/Applications' -maxdepth 1 -regex '.*/Xcode[^ ]*.app' -print -quit)"
-    if test -n "${x}"; then
-      sudo xcode-select -s "${x}"
-      sudo xcodebuild -license accept
-    fi
-  fi
-}
-
 # Install macOS Updates
 
 init_updates () {
   sudo softwareupdate --install --all
 }
 
-# Save Mac App Store Packages
-# #+begin_example sh
-# sudo lsof -c softwareupdated -F -r 2 | sed '/^n\//!d;/com.apple.SoftwareUpdate/!d;s/^n//'
-# sudo lsof -c storedownloadd -F -r 2 | sed '/^n\//!d;/com.apple.appstore/!d;s/^n//'
-# #+end_example
-
-_maskeep_launchd='add	:KeepAlive	bool	false
-add	:Label	string	com.github.ptb.maskeep
-add	:ProcessType	string	Background
-add	:Program	string	/usr/local/bin/maskeep
-add	:RunAtLoad	bool	true
-add	:StandardErrorPath	string	/dev/stderr
-add	:StandardOutPath	string	/dev/stdout
-add	:UserName	string	root
-add	:WatchPaths	array	
-add	:WatchPaths:0	string	$(sudo find '"'"'/private/var/folders'"'"' -name '"'"'com.apple.SoftwareUpdate'"'"' -type d -user _softwareupdate -print -quit 2> /dev/null)
-add	:WatchPaths:1	string	$(sudo -u \\#501 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
-add	:WatchPaths:2	string	$(sudo -u \\#502 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
-add	:WatchPaths:3	string	$(sudo -u \\#503 -- sh -c '"'"'getconf DARWIN_USER_CACHE_DIR'"'"' 2> /dev/null)com.apple.appstore
-add	:WatchPaths:4	string	/Library/Updates'
-
-init_maskeep () {
-  sudo softwareupdate --reset-ignored > /dev/null
-
-  cat << EOF > "/usr/local/bin/maskeep"
-#!/bin/sh
-
-asdir="/Library/Caches/storedownloadd"
-as1="\$(sudo -u \\#501 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
-as2="\$(sudo -u \\#502 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
-as3="\$(sudo -u \\#503 -- sh -c 'getconf DARWIN_USER_CACHE_DIR' 2> /dev/null)com.apple.appstore"
-upd="/Library/Updates"
-sudir="/Library/Caches/softwareupdated"
-su="\$(sudo find '/private/var/folders' -name 'com.apple.SoftwareUpdate' -type d -user _softwareupdate 2> /dev/null)"
-
-for i in 1 2 3 4 5; do
-  mkdir -m a=rwxt -p "\$asdir"
-  for as in "\$as1" "\$as2" "\$as3" "\$upd"; do
-    test -d "\$as" && \
-    find "\${as}" -type d -print | \\
-    while read a; do
-      b="\${asdir}/\$(basename \$a)"
-      mkdir -p "\${b}"
-      find "\${a}" -type f -print | \\
-      while read c; do
-        d="\$(basename \$c)"
-        test -e "\${b}/\${d}" || \\
-          ln "\${c}" "\${b}/\${d}" && \\
-          chmod 666 "\${b}/\${d}"
-      done
-    done
-  done
-
-  mkdir -m a=rwxt -p "\${sudir}"
-  find "\${su}" -name "*.tmp" -type f -print | \\
-  while read a; do
-    d="\$(basename \$a)"
-    test -e "\${sudir}/\${d}.xar" ||
-      ln "\${a}" "\${sudir}/\${d}.xar" && \\
-      chmod 666 "\${sudir}/\${d}.xar"
-  done
-
-  sleep 1
-done
-
-exit 0
-EOF
-
-  chmod a+x "/usr/local/bin/maskeep"
-  rehash
-
-  config_launchd "/Library/LaunchDaemons/com.github.ptb.maskeep.plist" "$_maskeep_launchd" "sudo" ""
-}
 
 # Define Function =install=
 
