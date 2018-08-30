@@ -416,11 +416,11 @@ install_brewfile_cask_pkgs () {
 }
 # Add App Store Packages to Brewfile
 _mas='Affinity Photo	824183456
-Affinity Designer 824171161
-Fantastical 975937182
+Affinity Designer	824171161
+Fantastical	975937182
 Growl	467939042
 HardwareGrowler	475260933
-Reeder 880001334
+Reeder	880001334
 Xcode	497799835
 '
 
