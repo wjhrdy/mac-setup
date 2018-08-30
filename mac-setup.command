@@ -269,7 +269,6 @@ install_macos_sw () {
     sudo xcodebuild -license accept
   fi
 
-  install_links
   sudo xattr -rd "com.apple.quarantine" "/Applications" > /dev/null 2>&1
   sudo chmod -R go=u-w "/Applications" > /dev/null 2>&1
 }
